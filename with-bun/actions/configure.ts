@@ -4,13 +4,23 @@ import path from 'path';
 
 const configFile = 'config.json';
 
-export const get = (key: string): any | null => {
-  const configuration = config();
-  if (!configuration || !configuration[key]) {
-    throw new Error(`${key} is not defined in ${configFile}`);
+/** get the config key
+ * 
+ * @param key the configuration key
+ * @param defaultValue the optional default value
+ * @returns the config value for key, if set, otherwise the default value, if set, otherwise throws an error
+ */
+export const get = (key: string, defaultValue?: any): any => {
+  const configuration = config()
+  if (!configuration || !(key in configuration)) {
+    if (defaultValue !== undefined) {
+      return defaultValue;
+    }
+    throw new Error(`${key} is not defined in ${configFile}`)
   }
-  return configuration[key];
-};
+  return configuration[key]
+}
+
 
 export const config = (): Record<string, any> | null => {
   try {

@@ -27,21 +27,21 @@ function writeSessionFile(data: Record<string, any>): void {
   }
 }
 
-// Get a value by key
-export function get(key: string): any | null {
-  const sessionData = readSessionFile();
-  return sessionData[key] ?? null;
+// Get a value by key, with an optional default value
+export function get(key: string, defaultValue?: any): any {
+    const sessionData = readSessionFile()
+    return key in sessionData ? sessionData[key] : defaultValue;
 }
-
+  
 // Check if a key exists
 export function has(key: string): boolean {
-  const sessionData = readSessionFile();
-  return Object.prototype.hasOwnProperty.call(sessionData, key);
+  const sessionData = readSessionFile()
+  return Object.prototype.hasOwnProperty.call(sessionData, key)
 }
 
 // Set a key-value pair and persist to the session file
 export function set(key: string, value: any): void {
-  const sessionData = readSessionFile();
-  sessionData[key] = value;
-  writeSessionFile(sessionData);
+  const sessionData = readSessionFile()
+  sessionData[key] = value
+  writeSessionFile(sessionData)
 }

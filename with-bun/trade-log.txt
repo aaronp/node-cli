@@ -1,1 +1,2 @@
 Asset: ETH, Amount: 123
+Asset: BTC, Amount: 1

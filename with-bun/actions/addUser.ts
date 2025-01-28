@@ -1,5 +1,4 @@
-import { intro, outro, text, note, isCancel } from '@clack/prompts';
-import { get } from './configure';
+import { intro, outro, text, note, isCancel, spinner } from '@clack/prompts';
 import axios from 'axios';
 
 export const onAddUser = async () => {
@@ -16,22 +15,28 @@ export const onAddUser = async () => {
     return;
   }
 
-  console.log('Performing search...');
-  const searchResults = await search(query as string);
+  // Show a spinner while performing the search
+  const progress = spinner();
+  progress.start('Performing search...');
 
-  console.log('Search Results:', JSON.stringify(searchResults.data, null, 2));
-  outro('User added successfully!');
+  try {
+    const searchResults = await search(query as string);
+    progress.stop('Search completed successfully!');
+
+    console.log('Search Results:', JSON.stringify(searchResults.data, null, 2));
+    outro('User added successfully!');
+  } catch (error) {
+    progress.stop('Error occurred during the search!');
+    console.error('Error performing search:', error);
+  }
 };
 
 const search = async (text: string): Promise<any> => {
   try {
-    // Example: Fetch the base URL from the configuration file
-    // const baseUrl = get('url');
+    // Simulate search (e.g., fetching data from a configuration file or database)
     const response = await axios.get(`https://www.google.com/search?q=${text}`);
-
     return response;
   } catch (error) {
-    console.error('Error performing search:', error);
     throw error;
   }
 };

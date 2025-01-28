@@ -1,5 +1,6 @@
-import { intro, outro, text, note, isCancel } from '@clack/prompts';
+import { intro, outro, text, note, isCancel, spinner } from '@clack/prompts';
 import fs from 'fs';
+import { setTimeout } from 'timers/promises';
 
 export async function onTrade() {
   intro('Trade an Asset');
@@ -26,13 +27,20 @@ export async function onTrade() {
     return;
   }
 
-  console.log(`Trading ${amount} of ${asset}...`);
+  // Show a spinner while the trade is being executed
+  const progress = spinner();
+  progress.start(`Executing trade: ${amount} of ${asset}...`);
 
-  // Simulate saving or executing the trade
   try {
-    fs.writeFileSync('./trade-log.txt', `Asset: ${asset}, Amount: ${amount}\n`, { flag: 'a' });
-    outro(`Trade successfully logged: ${amount} of ${asset}`);
+    // Simulate trade execution delay
+    await setTimeout(2000);
+
+    // Simulate saving or executing the trade
+    // fs.writeFileSync('./trade-log.txt', `Asset: ${asset}, Amount: ${amount}\n`, { flag: 'a' });
+    progress.stop('Trade successfully logged!');
+    outro(`Trade completed: ${amount} of ${asset}`);
   } catch (error) {
+    progress.stop('Error occurred during the trade!');
     console.error('Error saving the trade:', error);
   }
 }
