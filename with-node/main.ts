@@ -27,7 +27,7 @@ async function main() {
           await onConfigure();
           break;
         case 'addUser':
-          await onAddUser();
+          await onAddUser()
           break;
         case 'trade':
           await onTrade();
