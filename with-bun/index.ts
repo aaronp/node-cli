@@ -1,8 +1,6 @@
 import { intro, select, isCancel, outro } from '@clack/prompts'
 import { onConfigure } from './actions/configure'
-import { onAddUser } from './actions/addUser'
-import { onTrade } from './actions/trade'
-
+import { onFillOutForm } from './actions/onFillOutForm';
 async function main() {
   intro('Welcome to the CLI!')
 
@@ -12,8 +10,7 @@ async function main() {
       message: 'What would you like to do?',
       options: [
         { value: 'config', label: 'Configuration', hint: 'save session files' },
-        { value: 'addUser', label: 'Add User', hint: 'Add/remove users' },
-        { value: 'trade', label: 'Trade', hint: 'Trade assets' },
+        { value: 'form', label: 'Fill out form' },
         { value: 'quit', label: 'Quit' }
       ]
     });
@@ -27,11 +24,8 @@ async function main() {
       case 'config':
         await onConfigure()
         break
-      case 'addUser':
-        await onAddUser()
-        break
-      case 'trade':
-        await onTrade()
+      case 'form':
+        await onFillOutForm()
         break
       case 'quit':
         outro('Goodbye!')
