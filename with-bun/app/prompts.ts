@@ -1,15 +1,29 @@
-import { text, select, confirm } from "@clack/prompts"; 
+import { text, select, confirm, isCancel } from "@clack/prompts"; 
 // ^ or any similar prompt library in your Bun/TypeScript environment
 
+//
+// ------ TYPES -----
+//
 export type Prompt = {
-  fieldName: string;
-  userPrompt: string | null;
+  fieldName: string;            // e.g. "foo.bar.flag" or "foo.objects" or "foo.objects.innerName"
+  userPrompt: string | null;    // e.g. "Foo -> Bar -> Flag"
   required: boolean;
-  repeats: boolean;
+  repeats: boolean;             // for arrays of primitives or array of objects
   defaultValue: string | null;
   options: string[] | null;
   typeHint: "string" | "int" | "float" | "boolean" | null;
+
+  /**
+   * If this prompt represents an "array of objects," we store
+   * a set of 'subPrompts' for one "template" item. We'll prompt
+   * repeatedly to build an array of such objects.
+   */
+  subPrompts?: Prompt[] | null;
 };
+
+//
+// ------ UTILITIES -----
+//
 
 /**
  * Convert a camelCase or PascalCase string into a human-readable string.
@@ -58,112 +72,213 @@ function parseValue(
 }
 
 /**
- * Prompt the user for values based on an array of Prompt definitions.
- * Returns an object whose keys are the fieldNames and values are the user inputs.
+ * Helper to set a nested value in an object given a dot-delimited path.
+ * E.g., setNestedValue(obj, "foo.bar.flag", true) creates:
+ * {
+ *   foo: {
+ *     bar: {
+ *       flag: true
+ *     }
+ *   }
+ * }
+ */
+function setNestedValue(
+  target: Record<string, any>,
+  path: string,
+  value: any
+): void {
+  const keys = path.split(".");
+  let current: Record<string, any> = target;
+
+  for (let i = 0; i < keys.length - 1; i++) {
+    const k = keys[i];
+    if (typeof current[k] !== "object" || current[k] === null) {
+      current[k] = {};
+    }
+    current = current[k];
+  }
+
+  current[keys[keys.length - 1]] = value;
+}
+
+//
+// ------ RECURSIVE PROMPTING -----
+//
+
+/**
+ * askOnePrompt handles prompting for a single 'Prompt' object,
+ * returning the user’s answer as a JS value (string/boolean/number) or array of values/objects,
+ * depending on .repeats and .subPrompts.
+ *
+ * @param prompt - the definition for this field
+ * @param prefix - an array of strings that represent higher-level context,
+ *                 used to produce a "Foo -> Bar -> Bazz" display
+ */
+async function askOnePrompt(
+  prompt: Prompt,
+  prefix: string[]
+): Promise<any> {
+  // If subPrompts exist, that means this is "an array of objects."
+  // We'll prompt repeatedly for those subPrompts to build an array.
+  if (prompt.subPrompts && prompt.subPrompts.length > 0) {
+    const allItems: any[] = [];
+    let keepAdding = true;
+
+    // For user messages, combine the prefix with any userPrompt we might have
+    const label = prompt.userPrompt ?? asPrompt(prompt.fieldName);
+    const fullPromptPrefix = [...prefix, label];  // e.g. [ "Foo", "Objects" ]
+
+    while (keepAdding) {
+      console.log(`\n--- Enter data for: ${fullPromptPrefix.join(" -> ")} ---`);
+      // Recursively prompt for the subPrompts, passing a new prefix if desired.
+      // We'll pass an *empty* prefix or something like `["Foo", "Objects"]` so sub-fields
+      // don't end up with huge repeated paths. This is flexible:
+      const subAnswers = await askPromptsRecursively(prompt.subPrompts, fullPromptPrefix);
+      allItems.push(subAnswers);
+
+      if (prompt.repeats) {
+        const ok = await confirm({ message: "Add another item?" })
+        keepAdding = !isCancel(ok) && ok;
+      } else {
+        // If not repeating, break
+        keepAdding = false;
+      }
+    }
+
+    return allItems;
+  }
+
+  // If repeats is true but subPrompts is empty/undefined, we have an array of primitives
+  if (prompt.repeats) {
+    const collected: any[] = [];
+    let keepRepeating = true;
+
+    while (keepRepeating) {
+      const val = await askForSingleValue(prompt, prefix);
+      collected.push(val);
+
+      const wantsMore = await confirm({ message: "Add another?" });
+      if (!wantsMore) {
+        keepRepeating = false;
+      }
+    }
+
+    return collected;
+  }
+
+  // Otherwise, it's a single value
+  const singleVal = await askForSingleValue(prompt, prefix);
+  return singleVal;
+}
+
+/**
+ * askForSingleValue handles the case where we just prompt
+ * the user for a single primitive value (string/boolean/float/int).
+ */
+async function askForSingleValue(
+  prompt: Prompt,
+  prefix: string[]
+): Promise<string | number | boolean | undefined> {
+  // Build the label from prefix + userPrompt
+  const label = prompt.userPrompt ?? asPrompt(prompt.fieldName);
+  const fullLabel = [...prefix, label].join(" -> ");
+
+  while (true) {
+    let rawInput: string | undefined = undefined;
+    const hasOptions = prompt.options && prompt.options.length > 0;
+
+    if (hasOptions) {
+      // If we have options, we do a select prompt
+      const optionObjects = prompt.options!.map((o) => ({
+        label: o,
+        value: o,
+      }));
+
+      rawInput = (await select({
+        message: fullLabel,
+        options: optionObjects,
+      })) as string;
+
+      if (!rawInput && prompt.defaultValue !== null) {
+        rawInput = prompt.defaultValue;
+      }
+    } else {
+      // Otherwise we do a text input
+      const placeholder = prompt.defaultValue ?? undefined;
+      rawInput = (await text({
+        message: fullLabel,
+        placeholder,
+      })) as string;
+
+      if ((rawInput === undefined || rawInput.trim() === "") && prompt.defaultValue !== null) {
+        rawInput = prompt.defaultValue;
+      }
+    }
+
+    // If it's required, ensure the user typed something (or there's a default)
+    if (
+      (rawInput === undefined || rawInput.trim() === "") &&
+      prompt.required &&
+      !prompt.defaultValue
+    ) {
+      // We'll loop again
+      continue;
+    }
+
+    // Parse if present
+    if (rawInput !== undefined) {
+      try {
+        return parseValue(rawInput, prompt.typeHint);
+      } catch (err) {
+        console.error((err as Error).message);
+        // re-prompt
+        continue;
+      }
+    } else {
+      // If no input, might return undefined or default
+      return undefined;
+    }
+  }
+}
+
+/**
+ * askPromptsRecursively:
+ *  - Takes an array of prompts, plus a prefix array.
+ *  - For each prompt, calls askOnePrompt, then merges the result
+ *    into a single returned object, respecting dot-delimited fieldName paths.
+ */
+async function askPromptsRecursively(
+  prompts: Prompt[],
+  prefix: string[]
+): Promise<Record<string, any>> {
+  // Start with an empty result
+  let result: Record<string, any> = {};
+
+  for (const prompt of prompts) {
+    // Ask user for this prompt's data
+    const value = await askOnePrompt(prompt, prefix);
+    // Store the result in `result` at the dot-delimited path
+    setNestedValue(result, prompt.fieldName, value);
+  }
+
+  return result;
+}
+
+/**
+ * The main function: promptForInputs
+ *  - Delegates to askPromptsRecursively, starting with an empty prefix.
+ *  - Returns a nested object respecting the dot paths.
  */
 export async function promptForInputs(
   prompts: Prompt[]
 ): Promise<Record<string, any>> {
-  const answers: Record<string, any> = {};
-
-  for (const prompt of prompts) {
-    const question = prompt.userPrompt ?? asPrompt(prompt.fieldName);
-    const hasOptions = prompt.options && prompt.options.length > 0;
-
-    // We'll accumulate values in an array if `repeats` is true.
-    // Otherwise, we'll just store the single value.
-    const collectedValues: any[] = [];
-
-    let keepRepeating = true;
-    while (keepRepeating) {
-      let rawInput: string | undefined = undefined;
-
-      // 1) If `options` is non-empty, let the user pick from a list:
-      if (hasOptions) {
-        // Convert prompt.options to clack's select "options" format
-        const optionObjects = prompt.options!.map((o) => ({
-          label: o,
-          value: o,
-        }));
-
-        rawInput = (await select({
-          message: question,
-          options: optionObjects,
-          // In Clack, there's no direct concept of a "defaultValue" for select prompts,
-          // so you might handle that logic yourself, or rely on an added "None" or "Skip" option.
-        })) as string;
-
-        // If user canceled or didn't pick anything (depending on the library's behavior)
-        if (!rawInput) {
-          if (prompt.defaultValue !== null) {
-            rawInput = prompt.defaultValue; // Use default if available
-          }
-        }
-      } else {
-        // 2) Otherwise, prompt for free-text input:
-        const placeholder = prompt.defaultValue ?? undefined;
-        rawInput = (await text({
-          message: question,
-          placeholder,
-        })) as string;
-
-        // If the user just pressed enter with no input
-        if ((rawInput === undefined || rawInput.trim() === "") && prompt.defaultValue !== null) {
-          // Use the default if provided
-          rawInput = prompt.defaultValue;
-        }
-      }
-
-      // If no input after all that and it's required (without default), re-prompt:
-      if ((rawInput === undefined || rawInput.trim() === "") && prompt.required && !prompt.defaultValue) {
-        // Loop again to ask the user
-        continue;
-      }
-
-      // 3) Parse the raw input based on typeHint (if provided):
-      if (rawInput === undefined) {
-        // At this point, rawInput is not required or was set to defaultValue,
-        // so we can store undefined or default if needed.
-        collectedValues.push(undefined);
-      } else {
-        try {
-          const parsed = parseValue(rawInput, prompt.typeHint);
-          collectedValues.push(parsed);
-        } catch (err) {
-          // If parse fails, re-prompt:
-          console.error((err as Error).message);
-          continue;
-        }
-      }
-
-      // 4) If repeats is false, we're done collecting for this field:
-      if (!prompt.repeats) {
-        keepRepeating = false;
-      } else {
-        // Ask user if they want to add more values
-        const wantsMore = await confirm({
-          message: "Add another?",
-        });
-        if (!wantsMore) {
-          keepRepeating = false;
-        }
-      }
-    }
-
-    // 5) If `repeats` is true, store an array of all collected values; otherwise, store the first.
-    answers[prompt.fieldName] = prompt.repeats ? collectedValues : collectedValues[0];
-  }
-
-  return answers;
+  return await askPromptsRecursively(prompts, []);
 }
 
+//
+// ------ BUILD PROMPTS (unchanged from prior example) -----
+//
 
-
-/**
- * Returns true if a value is considered "non-default."
- * We treat null, 0, and "" as defaults, so they skip
- * setting type hints / defaultValue.
- */
 function isNonDefault(value: unknown): boolean {
   if (value === null) return false;
   if (value === 0) return false;
@@ -171,17 +286,11 @@ function isNonDefault(value: unknown): boolean {
   return true;
 }
 
-/**
- * Guess the "typeHint" for a simple primitive value.
- * (For arrays, we'll treat the items' type similarly.)
- */
 function guessTypeHint(value: unknown): Prompt["typeHint"] {
   switch (typeof value) {
     case "boolean":
       return "boolean";
     case "number":
-      // We can't reliably distinguish int vs float,
-      // but let's do a basic check:
       return Number.isInteger(value) ? "int" : "float";
     case "string":
       return "string";
@@ -192,48 +301,66 @@ function guessTypeHint(value: unknown): Prompt["typeHint"] {
 
 /**
  * Recursively build an array of Prompts for a given object.
+ * Now supports "arrays of objects" by generating 'subPrompts'.
+ *
  * @param obj    The current portion of the JSON object
  * @param path   The list of keys leading to 'obj'
  *               (used to create dot-delimited fieldNames
- *               and "->"-delimited userPrompts)
+ *               and "->"-delimited userPrompts if you want)
  */
 function buildPrompts(obj: unknown, path: string[]): Prompt[] {
   const prompts: Prompt[] = [];
 
   if (Array.isArray(obj)) {
-    // For arrays, we let the user repeat inputs. 
-    // We'll base the type on the first non-default item if available.
-    let arrayTypeHint: Prompt["typeHint"] = null;
-    const firstNonDefaultItem = obj.find(isNonDefault);
-    if (firstNonDefaultItem !== undefined) {
-      arrayTypeHint = guessTypeHint(firstNonDefaultItem);
+    // Check if the array items are objects or primitives
+    const firstItem = obj[0];
+    // If there's at least one item and it's an object (non-array),
+    // we treat it as "array of objects"
+    if (firstItem && typeof firstItem === "object" && !Array.isArray(firstItem)) {
+      // Single Prompt with subPrompts describing that object
+      const fieldName = path.join(".");
+      const userPrompt = path.map(asPrompt).join(" -> ");
+
+      const subPrompts = buildPrompts(firstItem, []);
+      prompts.push({
+        fieldName,
+        userPrompt,
+        required: false,
+        repeats: true,
+        defaultValue: null,
+        options: null,
+        typeHint: null,
+        subPrompts,
+      });
+    } else {
+      // Otherwise, array of primitives or empty
+      let arrayTypeHint: Prompt["typeHint"] = null;
+      const firstNonDefaultItem = obj.find(isNonDefault);
+      if (firstNonDefaultItem !== undefined) {
+        arrayTypeHint = guessTypeHint(firstNonDefaultItem);
+      }
+
+      const fieldName = path.join(".");
+      const userPrompt = path.map(asPrompt).join(" -> ");
+
+      prompts.push({
+        fieldName,
+        userPrompt,
+        required: false, 
+        repeats: true,
+        defaultValue: null,
+        options: null,
+        typeHint: arrayTypeHint,
+      });
     }
-
-    // The dot-delimited path for fieldName:
-    const fieldName = path.join(".");
-    // The "->"-delimited path for userPrompt:
-    const userPrompt = path.map(asPrompt).join(" -> ");
-
-    prompts.push({
-      fieldName,
-      userPrompt,
-      required: false, // Or your desired rule
-      repeats: true,
-      defaultValue: null,
-      options: null,
-      typeHint: arrayTypeHint,
-    });
-  }
-  else if (obj !== null && typeof obj === "object") {
+  } else if (obj !== null && typeof obj === "object") {
     // It's a nested object: we recurse over each key
     const record = obj as Record<string, unknown>;
     for (const [key, value] of Object.entries(record)) {
-      // Recurse deeper with path extended by `key`
       const nestedPrompts = buildPrompts(value, [...path, key]);
       prompts.push(...nestedPrompts);
     }
-  }
-  else {
+  } else {
     // It's a primitive or null
     const fieldName = path.join(".");
     const userPrompt = path.map(asPrompt).join(" -> ");
@@ -248,7 +375,7 @@ function buildPrompts(obj: unknown, path: string[]): Prompt[] {
     prompts.push({
       fieldName,
       userPrompt,
-      required: false, // or your logic for "required"
+      required: false, 
       repeats: false,
       defaultValue,
       options: null,
@@ -259,12 +386,6 @@ function buildPrompts(obj: unknown, path: string[]): Prompt[] {
   return prompts;
 }
 
-
-/**
- * Main function: Create Prompt[] from an arbitrary nested JSON object.
- */
-export const promptsForJason = (exampleJson: unknown) : Prompt[] => {
-    // Start recursion at the root, with an empty path
-    return buildPrompts(exampleJson, []);
-  }
-  
+export const promptsForJason = (exampleJson: unknown): Prompt[] => {
+  return buildPrompts(exampleJson, []);
+};
