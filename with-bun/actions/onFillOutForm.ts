@@ -1,4 +1,4 @@
-import { promptForInputs, promptsForJason } from "../app/prompts"
+import { promptForInputs, promptsForJason, type Prompt } from "../app/prompts"
 
 const example = async () => {
     const defaults = {
@@ -36,7 +36,19 @@ export const onFillOutForm = async () => {
         }
     }
     const prompts = promptsForJason(defaults)
+
+    const prompt : Prompt =  {
+      "fieldName": "example.nested.value",
+      "userPrompt": "Example",
+      "required": true,
+      "repeats": false,
+      "defaultValue": null,
+      "options": ["one", "two", "three"],
+      "typeHint": "string"
+    }
+
+
     console.log(prompts.map((p) => JSON.stringify(p, null, 2)).join("\n\n\n"))
-    const data = await promptForInputs(prompts)
+    const data = await promptForInputs([prompt, ...prompts])
     console.log(JSON.stringify(data, null, 2))
 }

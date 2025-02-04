@@ -129,7 +129,7 @@ async function askOnePrompt(
     const fullPromptPrefix = [...prefix, label];  // e.g. [ "Foo", "Objects" ]
 
     while (keepAdding) {
-      console.log(`\n--- Enter data for: ${fullPromptPrefix.join(" -> ")} ---`);
+    
       // Recursively prompt for the subPrompts, passing a new prefix if desired.
       // We'll pass an *empty* prefix or something like `["Foo", "Objects"]` so sub-fields
       // don't end up with huge repeated paths. This is flexible:
